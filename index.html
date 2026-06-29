@@ -62,16 +62,21 @@
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
   /* expanding circle that inverts the page on scroll.
-     A full-screen fixed layer clipped to a growing circle (vector clip = crisp
-     edge at any size). It inverts the real content BEHIND it via backdrop-filter
-     — unlike mix-blend-mode:difference, this is reliable across Chrome/Edge/Safari
-     and never collapses to an opaque black disc on mobile. */
+     It inverts the real content BEHIND it via backdrop-filter (reliable across
+     Chrome/Edge/Safari — never collapses to a black disc like mix-blend-mode did).
+     The circle is born at its FINAL size and only scaled DOWN (scale 0→1), so it
+     is never upscaled: the rounded edge stays crisp AND the growth is driven by
+     transform (GPU-composited, smooth on Safari) instead of clip-path (which
+     forces main-thread repaints and stutters on Safari). */
   .negative{
-    position:fixed;inset:0;pointer-events:none;z-index:40;
-    clip-path:circle(var(--r,0px) at var(--ox,40px) var(--oy,42px));
+    position:fixed;left:var(--ox,40px);top:var(--oy,42px);
+    width:var(--d,0px);height:var(--d,0px);
+    margin-left:calc(var(--d,0px) / -2);margin-top:calc(var(--d,0px) / -2);
+    border-radius:50%;
     -webkit-backdrop-filter:invert(1);
     backdrop-filter:invert(1);
-    will-change:clip-path;
+    transform:scale(var(--s,0));transform-origin:center;
+    pointer-events:none;z-index:40;will-change:transform;
   }
   /* if a browser can't invert the backdrop, hide the circle rather than break
      content — the page just reads as the normal dark theme everywhere. */
@@ -354,7 +359,8 @@
     const far = Math.hypot(Math.max(ox, w - ox), Math.max(oy, h - oy));
     neg.style.setProperty('--ox', ox + 'px');
     neg.style.setProperty('--oy', oy + 'px');
-    neg.style.setProperty('--r', (p * far * 1.04).toFixed(1) + 'px'); // fully covers right as page ends
+    neg.style.setProperty('--d', (far * 1.04 * 2).toFixed(1) + 'px'); // final diameter (covers as page ends)
+    neg.style.setProperty('--s', p.toFixed(4));                       // scale 0→1, only ever shrinks the disc
     ticking = false;
   }
   addEventListener('scroll', ()=>{ if(!ticking){ requestAnimationFrame(paint); ticking = true; } }, {passive:true});
