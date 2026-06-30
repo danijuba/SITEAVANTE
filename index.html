@@ -61,28 +61,29 @@
     content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;mix-blend-mode:screen;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
-  /* expanding circle that inverts the page on scroll.
-     It inverts the real content BEHIND it via backdrop-filter (reliable across
-     Chrome/Edge/Safari — never collapses to a black disc like mix-blend-mode did).
-     The circle is born at its FINAL size and only scaled DOWN (scale 0→1), so it
-     is never upscaled: the rounded edge stays crisp AND the growth is driven by
-     transform (GPU-composited, smooth on Safari) instead of clip-path (which
-     forces main-thread repaints and stutters on Safari). */
-  .negative{
-    position:fixed;left:var(--ox,40px);top:var(--oy,42px);
-    width:var(--d,0px);height:var(--d,0px);
-    margin-left:calc(var(--d,0px) / -2);margin-top:calc(var(--d,0px) / -2);
-    border-radius:50%;
-    -webkit-backdrop-filter:invert(1);
-    backdrop-filter:invert(1);
-    transform:scale(var(--s,0));transform-origin:center;
-    pointer-events:none;z-index:40;will-change:transform;
+  /* expanding circle reveals a pre-inverted, scroll-synced copy of the page.
+     The copy is inverted ONCE with filter:invert (static, cached layer); scrolling
+     only TRANSLATES it and the circle only CLIPS it — zero per-frame filtering, so
+     it stays smooth even on Safari (where animating backdrop-filter stutters).
+     clip-path keeps the edge vector-crisp at any size. */
+  .invert-layer{
+    position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden;
+    clip-path:circle(var(--r,0px) at var(--ox,40px) var(--oy,42px));
+    will-change:clip-path;
   }
-  /* if a browser can't invert the backdrop, hide the circle rather than break
-     content — the page just reads as the normal dark theme everywhere. */
-  @supports not ((backdrop-filter:invert(1)) or (-webkit-backdrop-filter:invert(1))){
-    .negative{display:none}
+  .invert-inner{
+    position:absolute;top:0;left:0;
+    background:var(--ink);filter:invert(1);
+    transform:translate3d(0,var(--ty,0px),0);will-change:transform;
   }
+  /* the clone is a static snapshot — force entrance animations to their end state
+     and freeze marquees so it matches the live page inside the circle. */
+  .invert-inner .reveal{opacity:1!important;transform:none!important}
+  .invert-inner .hero-foot{opacity:1!important}
+  .invert-inner h1 .row>span{transform:none!important}
+  .invert-inner .strip .track,.invert-inner .logos-track,.invert-inner .float{animation:none!important}
+  /* if a browser can't invert, hide the effect rather than break content */
+  @supports not (filter:invert(1)){ .invert-layer{display:none} }
   /* decorative geometry (from the brand cover) — inverts with the circle */
   .dec{position:absolute;color:var(--paper);opacity:.07;pointer-events:none;z-index:0}
 
@@ -244,7 +245,6 @@
 </svg>
 
 <div class="wrap">
-  <div class="negative" aria-hidden="true"></div>
   <nav>
     <a href="#top" class="mark" aria-label="Avante"><svg><use href="#tri"/></svg><span>VANTE</span></a>
     <div class="nav-r">
@@ -335,6 +335,10 @@
       <span>Visibilidade · Automação · Crescimento</span>
     </footer>
   </section>
+
+  <!-- inverted, scroll-synced copy of the page; revealed through the growing circle.
+       Sits below the nav (z-index) so the nav stays on top and inverts itself. -->
+  <div class="invert-layer" aria-hidden="true" inert><div class="invert-inner"></div></div>
 </div>
 
 <script>
@@ -346,25 +350,44 @@
     io.observe(el);
   });
 
-  // expanding white circle → inverts the page as you scroll
-  const neg = document.querySelector('.negative');
+  // ---- expanding circle reveals a pre-inverted copy of the page ----
+  // Build the static inverted copy ONCE (clone of the page content, minus the nav
+  // and the overlay itself). filter:invert on it is rasterized/cached, so on scroll
+  // we only translate + clip a cached layer — no per-frame filtering (smooth on Safari).
+  const layer = document.querySelector('.invert-layer');
+  const inner = document.querySelector('.invert-inner');
+  const wrap  = document.querySelector('.wrap');
+
+  function buildClone(){
+    inner.innerHTML = '';
+    wrap.childNodes.forEach(node=>{
+      if(node.nodeType !== 1 || node === layer || node.tagName === 'NAV') return;
+      inner.appendChild(node.cloneNode(true));
+    });
+    inner.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id')); // avoid duplicate ids
+  }
+  buildClone();
+
   let ticking = false;
   function paint(){
-    const w = window.innerWidth, h = window.innerHeight;
+    const w = document.documentElement.clientWidth, h = window.innerHeight;
     // origin sits behind the logo (matches --pad: clamp(20px,5vw,64px) + 15px)
     const ox = Math.max(20, Math.min(w * 0.05, 64)) + 15, oy = 42;
     const max = document.documentElement.scrollHeight - h;
     const p = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
     // distance from the origin to the farthest viewport corner
     const far = Math.hypot(Math.max(ox, w - ox), Math.max(oy, h - oy));
-    neg.style.setProperty('--ox', ox + 'px');
-    neg.style.setProperty('--oy', oy + 'px');
-    neg.style.setProperty('--d', (far * 1.04 * 2).toFixed(1) + 'px'); // final diameter (covers as page ends)
-    neg.style.setProperty('--s', p.toFixed(4));                       // scale 0→1, only ever shrinks the disc
+    inner.style.width = w + 'px';                              // match content width exactly
+    inner.style.setProperty('--ty', (-window.scrollY) + 'px'); // sync the copy to the scroll
+    layer.style.setProperty('--ox', ox + 'px');
+    layer.style.setProperty('--oy', oy + 'px');
+    layer.style.setProperty('--r', (p * far * 1.04).toFixed(1) + 'px'); // fully covers as page ends
     ticking = false;
   }
   addEventListener('scroll', ()=>{ if(!ticking){ requestAnimationFrame(paint); ticking = true; } }, {passive:true});
-  addEventListener('resize', paint);
+  let rt; addEventListener('resize', ()=>{ clearTimeout(rt); rt = setTimeout(()=>{ buildClone(); paint(); }, 150); });
+  addEventListener('load', ()=>{ buildClone(); paint(); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(()=>{ buildClone(); paint(); });
   paint();
 </script>
 </body>
